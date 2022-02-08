@@ -3,6 +3,11 @@ from pyproj import Transformer
 from functools import wraps
 
 
+_latlon_wgs_proj = {"proj": 'latlong', "ellps": 'WGS84', "datum": 'WGS84'}
+_ecef_wgs_proj = {"proj": 'geocent', "ellps": 'WGS84', "datum": 'WGS84'}
+_latlon_webmercator_proj = "EPSG:3857"
+
+
 def _add_method(cls):
     def decorator(func):
         @wraps(func)
@@ -13,7 +18,7 @@ def _add_method(cls):
     return decorator
 
 
-class CoordWgs:
+class CoordLatLon:
     _lat: float
     _lon: float
     _alt: float
@@ -34,6 +39,17 @@ class CoordWgs:
     @property
     def alt(self) -> float:
         return self._alt
+
+    def __str__(self) -> str:
+        return f"""Lat/Lon WGS84 Coordinate:
+    Latitude  (deg): {self.lat:.6f}
+    Longitude (deg): {self.lon:.6f}
+    Altitude    (m): {self.alt:.6f}"""
+
+    def to_webmercator(self):
+        recipe = Transformer.from_crs(_latlon_wgs_proj, _latlon_webmercator_proj)
+        lat, lon, alt = recipe.transform(self.lon, self.lat, self.alt)
+        return CoordLatLon(lat, lon, alt)
 
 
 class CoordEcef:
@@ -58,6 +74,12 @@ class CoordEcef:
     def z(self) -> float:
         return self._z
 
+    def __str__(self) -> str:
+        return f"""ECEF Coordinate:
+    X (m): {self.x:.6f}
+    Y (m): {self.y:.6f}
+    Z (m): {self.z:.6f}"""
+
 
 class CoordUtm:
     _e: float
@@ -76,7 +98,7 @@ class CoordUtm:
 
     @property
     def e(self) -> float:
-        return self._u
+        return self._e
 
     @property
     def n(self) -> float:
@@ -86,29 +108,65 @@ class CoordUtm:
     def u(self) -> float:
         return self._u
 
+    @property
+    def zone_number(self) -> int:
+        return self._zone_number
 
-_wgs_proj = {"proj": 'latlong', "ellps": 'WGS84', "datum": 'WGS84'}
-_ecef_proj = {"proj": 'geocent', "ellps": 'WGS84', "datum": 'WGS84'}
+    @property
+    def zone_letter(self) -> str:
+        return self._zone_letter
+
+    def __str__(self) -> str:
+        return f"""UTM Coordinate:
+    Easting  (m): {self.e:.6f}
+    Northing (m): {self.n:.6f}
+    Up       (m): {self.u:.6f}
+    Zone        : {self.zone_number}{self.zone_letter}"""
+
+    def __add__(self, other):
+        if self._zone_number != other._zone_number:
+            raise ValueError("Incompatible zone number.")
+
+        if self._zone_letter != other._zone_letter:
+            raise ValueError("Incompatible zone letter.")
+
+        e = self.e + other.e
+        n = self.n + other.n
+        u = self.u + other.u
+
+        return CoordUtm(e, n, u, self.zone_number, self.zone_letter)
+
+    def __sub__(self, other):
+        if self._zone_number != other._zone_number:
+            raise ValueError("Incompatible zone number.")
+
+        if self._zone_letter != other._zone_letter:
+            raise ValueError("Incompatible zone letter.")
+
+        e = self.e - other.e
+        n = self.n - other.n
+        u = self.u - other.u
+
+        return CoordUtm(e, n, u, self.zone_number, self.zone_letter)
 
 
-@_add_method(CoordWgs)
+@_add_method(CoordLatLon)
 def to_ecef(self) -> CoordEcef:
-    recipe = Transformer.from_crs(_wgs_proj, _ecef_proj)
-    x, y, z = recipe.transform(self._lon, self._lat, self._alt)
+    recipe = Transformer.from_crs(_latlon_wgs_proj, _ecef_wgs_proj)
+    x, y, z = recipe.transform(self.lon, self.lat, self.alt)
     return CoordEcef(x, y, z)
 
 
-@_add_method(CoordWgs)
+@_add_method(CoordLatLon)
 def to_utm(self) -> CoordUtm:
-    e, n, zone_number, zone_letter = utm.from_latlon(
-        self._lat, self._lon, self._zone_number, self._zone_letter)
+    e, n, zone_number, zone_letter = utm.from_latlon(self.lat, self.lon)
     return CoordUtm(e, n, self._alt, zone_number, zone_letter)
 
 
 @_add_method(CoordUtm)
-def to_wgs(self) -> CoordWgs:
-    lat, lon = utm.to_latlon(self._e, self._n, self._zone_number, self._zone_letter)
-    return CoordWgs(lat, lon, self._u)
+def to_latlon(self) -> CoordLatLon:
+    lat, lon = utm.to_latlon(self.e, self.n, self.zone_number, self.zone_letter)
+    return CoordLatLon(lat, lon, self.u)
 
 
 @_add_method(CoordUtm)
@@ -117,10 +175,10 @@ def to_ecef(self) -> CoordEcef:
 
 
 @_add_method(CoordEcef)
-def to_wgs(self) -> CoordWgs:
-    recipe = Transformer.from_crs(_ecef_proj, _wgs_proj)
-    lon, lat, alt = recipe.transform(self._x, self._y, self._z)
-    return CoordWgs(lat, lon, alt)
+def to_latlon(self) -> CoordLatLon:
+    recipe = Transformer.from_crs(_ecef_wgs_proj, _latlon_wgs_proj)
+    lon, lat, alt = recipe.transform(self.x, self.y, self.z)
+    return CoordLatLon(lat, lon, alt)
 
 
 @_add_method(CoordEcef)
