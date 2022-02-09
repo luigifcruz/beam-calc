@@ -1,21 +1,10 @@
 import utm
 from pyproj import Transformer
-from functools import wraps
 
 
 _latlon_wgs_proj = {"proj": 'latlong', "ellps": 'WGS84', "datum": 'WGS84'}
 _ecef_wgs_proj = {"proj": 'geocent', "ellps": 'WGS84', "datum": 'WGS84'}
 _latlon_webmercator_proj = "EPSG:3857"
-
-
-def _add_method(cls):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            return func(self, *args, **kwargs)
-        setattr(cls, func.__name__, wrapper)
-        return func
-    return decorator
 
 
 class CoordLatLon:
@@ -51,6 +40,15 @@ class CoordLatLon:
         lat, lon, alt = recipe.transform(self.lon, self.lat, self.alt)
         return CoordLatLon(lat, lon, alt)
 
+    def to_ecef(self):
+        recipe = Transformer.from_crs(_latlon_wgs_proj, _ecef_wgs_proj)
+        x, y, z = recipe.transform(self.lon, self.lat, self.alt)
+        return CoordEcef(x, y, z)
+
+    def to_utm(self):
+        e, n, zone_number, zone_letter = utm.from_latlon(self.lat, self.lon)
+        return CoordUtm(e, n, self._alt, zone_number, zone_letter)
+
 
 class CoordEcef:
     _x: float
@@ -79,6 +77,14 @@ class CoordEcef:
     X (m): {self.x:.6f}
     Y (m): {self.y:.6f}
     Z (m): {self.z:.6f}"""
+
+    def to_latlon(self):
+        recipe = Transformer.from_crs(_ecef_wgs_proj, _latlon_wgs_proj)
+        lon, lat, alt = recipe.transform(self.x, self.y, self.z)
+        return CoordLatLon(lat, lon, alt)
+
+    def to_utm(self):
+        return self.to_latlon().to_utm()
 
 
 class CoordUtm:
@@ -123,6 +129,13 @@ class CoordUtm:
     Up       (m): {self.u:.6f}
     Zone        : {self.zone_number}{self.zone_letter}"""
 
+    def to_latlon(self):
+        lat, lon = utm.to_latlon(self.e, self.n, self.zone_number, self.zone_letter)
+        return CoordLatLon(lat, lon, self.u)
+
+    def to_ecef(self):
+        return self.to_latlon().to_ecef()
+
     def __add__(self, other):
         if self._zone_number != other._zone_number:
             raise ValueError("Incompatible zone number.")
@@ -148,39 +161,3 @@ class CoordUtm:
         u = self.u - other.u
 
         return CoordUtm(e, n, u, self.zone_number, self.zone_letter)
-
-
-@_add_method(CoordLatLon)
-def to_ecef(self) -> CoordEcef:
-    recipe = Transformer.from_crs(_latlon_wgs_proj, _ecef_wgs_proj)
-    x, y, z = recipe.transform(self.lon, self.lat, self.alt)
-    return CoordEcef(x, y, z)
-
-
-@_add_method(CoordLatLon)
-def to_utm(self) -> CoordUtm:
-    e, n, zone_number, zone_letter = utm.from_latlon(self.lat, self.lon)
-    return CoordUtm(e, n, self._alt, zone_number, zone_letter)
-
-
-@_add_method(CoordUtm)
-def to_latlon(self) -> CoordLatLon:
-    lat, lon = utm.to_latlon(self.e, self.n, self.zone_number, self.zone_letter)
-    return CoordLatLon(lat, lon, self.u)
-
-
-@_add_method(CoordUtm)
-def to_ecef(self) -> CoordEcef:
-    return self.to_latlon().to_ecef()
-
-
-@_add_method(CoordEcef)
-def to_latlon(self) -> CoordLatLon:
-    recipe = Transformer.from_crs(_ecef_wgs_proj, _latlon_wgs_proj)
-    lon, lat, alt = recipe.transform(self.x, self.y, self.z)
-    return CoordLatLon(lat, lon, alt)
-
-
-@_add_method(CoordEcef)
-def to_utm(self) -> CoordUtm:
-    return self.to_latlon().to_utm()
