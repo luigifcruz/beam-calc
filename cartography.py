@@ -171,7 +171,7 @@ def to_latlon(self) -> CoordLatLon:
 
 @_add_method(CoordUtm)
 def to_ecef(self) -> CoordEcef:
-    return self.to_wgs().to_ecef()
+    return self.to_latlon().to_ecef()
 
 
 @_add_method(CoordEcef)
@@ -183,4 +183,4 @@ def to_latlon(self) -> CoordLatLon:
 
 @_add_method(CoordEcef)
 def to_utm(self) -> CoordUtm:
-    return self.to_wgs().to_utm()
+    return self.to_latlon().to_utm()
