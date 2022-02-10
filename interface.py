@@ -6,22 +6,25 @@ from logic import Beams
 from io import StringIO
 from bokeh.layouts import column, layout, row
 from cartography import CoordEcef
-from bokeh.tile_providers import ESRI_IMAGERY, get_provider
+from bokeh.tile_providers import get_provider, ESRI_IMAGERY
 from bokeh.plotting import figure, curdoc, gridplot
-from bokeh.models import LinearColorMapper, ColorBar, ColumnDataSource, Button
-from bokeh.models.widgets import DataTable, TableColumn, TextAreaInput, TextInput, Slider
+from bokeh.models import LinearColorMapper, ColorBar, Button
+from bokeh.models.widgets import DataTable, TableColumn, TextAreaInput, TextInput
 
 
 def generate_data():
-    global frequency_scalar_src
-    global phi_d_scalar_src
-    global theta_d_scalar_src
+    global frequency_scalar
+    global phi_d_scalar
+    global theta_d_scalar
 
     global antenna_map_src
-    global coordinates_text_src
+    global coordinates_text
     global coordinates_table_src
+    global zenith_plot_src
+    global azimuth_plot_src
+    global beam_pattern_plot_src
 
-    ecef_coords = pd.read_csv(StringIO(str(coordinates_text_src.value)))
+    ecef_coords = pd.read_csv(StringIO(str(coordinates_text.value)))
     latlon_coords = pd.DataFrame(columns=['antenna', 'lat', 'lon', 'alt'])
     enu_coords = pd.DataFrame(columns=['antenna', 'e', 'n', 'u'])
 
@@ -50,14 +53,38 @@ def generate_data():
         enu_coords = pd.concat([enu_coords, coord])
 
     beams = Beams(
-        frequency_scalar_src.value,
-        phi_d_scalar_src.value,
-        theta_d_scalar_src.value,
+        frequency_scalar.value,
+        phi_d_scalar.value,
+        theta_d_scalar.value,
         enu_coords)
 
-    coordinates_table_src.data = dict(ColumnDataSource(data=ecef_coords).data)
-    antenna_map_src.data = dict(ColumnDataSource(data=latlon_coords).data)
-    print("updated")
+    azimuth_plot_src.data = {
+        "angle": np.rad2deg(beams.azimuth - beams.theta_d),
+        "power": beams.db[:, beams.db.shape[1]//2],
+    }
+
+    zenith_plot_src.data = {
+        "angle": np.rad2deg(beams.zenith - beams.phi_d),
+        "power": beams.db[beams.db.shape[0]//2],
+    }
+
+    l, r, b, t = np.rad2deg([
+        beams.azimuth[-1],
+        beams.azimuth[0],
+        beams.zenith[-1],
+        beams.zenith[0]
+    ])
+
+    beam_pattern_plot_src.data = {
+        "image": [beams.db.T],
+        "x": [r],
+        "y": [b],
+        "dw": [l-r],
+        "dh": [b-t],
+    }
+
+    coordinates_table_src.data = dict(ecef_coords)
+    antenna_map_src.data = dict(latlon_coords)
 
 
 def antenna_map():
@@ -92,13 +119,66 @@ def antenna_map():
     return (fig, plot.data_source)
 
 
-def coordinates_text():
-    with open('ata-datum-condensed.csv', 'r') as file:
-        default_ecef = file.read()
+def beam_pattern_plot():
+    fig = figure(
+        title="Beam Pattern",
+        x_axis_label="Azimuth [deg]",
+        y_axis_label="Zenith Angle [deg]"
+    )
 
-    text = TextAreaInput(value=default_ecef, title="ECEF CSV File")
+    color_mapper = LinearColorMapper(palette='Viridis256', low=-30.0)
 
-    return (text, text)
+    plot = fig.image(color_mapper=color_mapper)
+
+    fig.add_layout(
+        ColorBar(
+            color_mapper=color_mapper,
+            title="Beam Gain [dB]"
+        ),
+        place='below'
+    )
+
+    return (fig, plot.data_source)
+
+
+def zenith_plot():
+    fig = figure(
+        title=f"Zenith Angle Offset",
+        x_axis_label="Zenith Angle Offset [deg]",
+        y_axis_label="Power [dB]"
+    )
+
+    plot = fig.line(x="angle", y="power")
+
+    return (fig, plot.data_source)
+
+
+def azimuth_plot():
+    fig = figure(
+        title=f"Azimuth Angle Offset",
+        x_axis_label="Azimuth Offset [deg]",
+        y_axis_label="Power [dB]")
+
+    plot = fig.line(x="angle", y="power")
+
+    return (fig, plot.data_source)
+
+
+def plots_interface():
+    global antenna_map_src
+    global zenith_plot_src
+    global azimuth_plot_src
+    global beam_pattern_plot_src
+
+    antenna_map_obj, antenna_map_src = antenna_map()
+    zenith_plot_obj, zenith_plot_src = zenith_plot()
+    azimuth_plot_obj, azimuth_plot_src = azimuth_plot()
+    beam_pattern_plot_obj, beam_pattern_plot_src = beam_pattern_plot()
+
+    return gridplot([
+        [antenna_map_obj, beam_pattern_plot_obj],
+        [azimuth_plot_obj, zenith_plot_obj]
+    ], sizing_mode="scale_height")
 
 
 def coordinates_table():
@@ -113,10 +193,17 @@ def coordinates_table():
 
 
 def coordinates_interface():
+    global coordinates_text
     global coordinates_table_src
-    global coordinates_text_src
 
-    coordinates_text_obj, coordinates_text_src = coordinates_text()
+    with open('ata-datum-condensed.csv', 'r') as file:
+        default_ecef = file.read()
+
+    coordinates_text = TextAreaInput(
+        value=default_ecef,
+        title="Array Coordinates (ECEF)"
+    )
+
     coordinates_table_obj, coordinates_table_src = coordinates_table()
 
     button_obj = Button(label="Update Coordinates")
@@ -124,7 +211,7 @@ def coordinates_interface():
 
     return column([
         row([
-            coordinates_text_obj, 
+            coordinates_text, 
             coordinates_table_obj,
         ], sizing_mode="scale_width"),
         button_obj,
@@ -132,33 +219,34 @@ def coordinates_interface():
 
 
 def scalars_interface():
-    global frequency_scalar_src
-    global phi_d_scalar_src
-    global theta_d_scalar_src
+    global frequency_scalar
+    global phi_d_scalar
+    global theta_d_scalar
 
-    frequency_scalar_src = TextInput(value="500", title="Frequency (MHz)")
-    phi_d_scalar_src = Slider(start=0.0, end=90.0, value=30.0, title="Zenith (deg)")
-    theta_d_scalar_src = Slider(start=0.0, end=360.0, value=30.0, title="Azimuth (deg)")
+    frequency_scalar = TextInput(value="500", title="Frequency (MHz)")
+    phi_d_scalar = TextInput(value="30", title="Zenith (deg)")
+    theta_d_scalar = TextInput(value="30", title="Azimuth (deg)")
 
     return column([
-        frequency_scalar_src,
-        phi_d_scalar_src,
-        theta_d_scalar_src,
+        frequency_scalar,
+        phi_d_scalar,
+        theta_d_scalar,
     ])
+
 
 def main():
     global antenna_map_src
 
-    antenna_map_obj, antenna_map_src = antenna_map()
     coordinates_interface_obj = coordinates_interface()
     scalars_interface_obj = scalars_interface()
+    plots_interface_obj = plots_interface()
 
     generate_data()
 
     plots = layout(children=[
         row([
             scalars_interface_obj,
-            antenna_map_obj,
+            plots_interface_obj,
         ]),
         coordinates_interface_obj,
     ], sizing_mode="scale_width")
