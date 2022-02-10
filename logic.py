@@ -118,11 +118,11 @@ class Beams:
 
     @property
     def zenith(self):
-        return self._phis
+        return np.rad2deg(self._phis)
 
     @property
     def azimuth(self):
-        return self._thetas
+        return np.rad2deg(self._thetas)
 
     @property
     def db(self):
